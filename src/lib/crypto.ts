@@ -1,41 +1,72 @@
-// lib/crypto.ts
+import * as bip39 from "bip39";
+import { HDNodeWallet } from "ethers";
 
 /**
- * AES-GCM encryption using Web Crypto API
- * @param data - Plain text to encrypt
- * @param key - CryptoKey for encryption (derived from wallet)
- * @returns Base64 encoded cipher text with IV
+ * Generate a new 12-word BIP-39 mnemonic phrase
  */
-export async function encryptData(data: string, key: CryptoKey): Promise<string> {
-  const enc = new TextEncoder();
-  const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit nonce recommended for AES-GCM
+export function generateMnemonic(): string {
+  return bip39.generateMnemonic(); // 128-bit entropy
+}
 
-  const ciphertext = await crypto.subtle.encrypt(
+/**
+ * Derive the private key from a BIP-39 mnemonic using ethers HD wallet
+ * Throws error if mnemonic is invalid
+ */
+export function getPrivateKey(mnemonic: string): string {
+  if (!bip39.validateMnemonic(mnemonic)) {
+    throw new Error("Invalid mnemonic");
+  }
+  return HDNodeWallet.fromPhrase(mnemonic).privateKey; // 0x-prefixed hex string
+}
+
+/**
+ * Derive AES-GCM key from the private key using SHA-256
+ * This CryptoKey will be used for encryption/decryption
+ */
+export async function getAesKey(privateKey: string): Promise<CryptoKey> {
+  const hex = privateKey.replace(/^0x/, "");
+  const raw = Uint8Array.from(Buffer.from(hex, "hex"));
+  const hash = await crypto.subtle.digest("SHA-256", raw); // 256-bit uniform key
+
+  return crypto.subtle.importKey(
+    "raw",
+    hash,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+/**
+ * Encrypt plain text using AES-GCM and return base64 encoded (IV + ciphertext)
+ */
+export async function encrypt(plainText: string, key: CryptoKey): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV
+  const data = new TextEncoder().encode(plainText);
+
+  const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
-    enc.encode(data)
+    data
   );
 
-  // Combine IV + ciphertext and encode in Base64 for storage
-  const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
+  // Combine IV + ciphertext
+  const encryptedBytes = new Uint8Array(encrypted);
+  const combined = new Uint8Array(iv.length + encryptedBytes.length);
   combined.set(iv, 0);
-  combined.set(new Uint8Array(ciphertext), iv.byteLength);
+  combined.set(encryptedBytes, iv.length);
 
+  // Convert to base64
   return btoa(String.fromCharCode(...combined));
 }
 
 /**
- * AES-GCM decryption using Web Crypto API
- * @param encrypted - Base64 encoded cipher text with IV
- * @param key - CryptoKey for decryption
- * @returns Decrypted plain text
+ * Decrypt base64 encoded (IV + ciphertext) using AES-GCM
  */
-export async function decryptData(encrypted: string, key: CryptoKey): Promise<string> {
-  const data = atob(encrypted);
-  const combined = new Uint8Array([...data].map(char => char.charCodeAt(0)));
-
-  const iv = combined.slice(0, 12); // First 12 bytes = IV
-  const ciphertext = combined.slice(12);
+export async function decrypt(encoded: string, key: CryptoKey): Promise<string> {
+  const binary = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
+  const iv = binary.slice(0, 12); // first 12 bytes = IV
+  const ciphertext = binary.slice(12);
 
   const decrypted = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv },
@@ -44,22 +75,4 @@ export async function decryptData(encrypted: string, key: CryptoKey): Promise<st
   );
 
   return new TextDecoder().decode(decrypted);
-}
-
-/**
- * Derive a CryptoKey from a raw Uint8Array key material (e.g. wallet private key)
- * @param rawKey - Uint8Array key material
- * @returns CryptoKey usable for AES-GCM
- */
-export async function importEncryptionKey(rawKey: Uint8Array): Promise<CryptoKey> {
-  // Hash the private key to derive a fixed length 256-bit key for AES-GCM
-  const hashedKey = await crypto.subtle.digest("SHA-256", rawKey);
-
-  return crypto.subtle.importKey(
-    "raw",
-    hashedKey,
-    { name: "AES-GCM" },
-    false,
-    ["encrypt", "decrypt"]
-  );
 }
