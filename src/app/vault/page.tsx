@@ -1,106 +1,131 @@
-// app/page.tsx
-"use client";
+'use client';
 
-import { useState } from "react";
+import { useSession } from "next-auth/react";
+import { redirect } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useVault } from "@/hooks/useVault";
 
-export default function Home() {
+export default function VaultPage() {
+  const { data: session } = useSession();
   const {
     mnemonic,
     setMnemonic,
     decryptedVault,
-    encryptedVault,
-    loadVault,
-    saveVault,
+    addEntry,
+    saveToServer,
+    loadFromServer,
   } = useVault();
 
-  const [inputMnemonic, setInputMnemonic] = useState("");
-  const [vaultInput, setVaultInput] = useState('{"entries":[{"site":"gmail","user":"me","pass":"123456"}]}');
+  const [site, setSite] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showMnemonicUI, setShowMnemonicUI] = useState(true); // first-time entry
 
-  const handleLoad = async () => {
-    try {
-      await loadVault(encryptedVault || "", inputMnemonic);
-    } catch (err) {
-      alert("Decryption failed: " + err);
-    }
+  useEffect(() => {
+    if (!session?.user?.email) redirect("/auth/signin");
+  }, [session]);
+
+  const handleMnemonicSubmit = async () => {
+    await loadFromServer(mnemonic);
+    setShowMnemonicUI(false);
+  };
+
+  const handleAdd = () => {
+    if (!site || !username || !password) return;
+    addEntry({ site, username, password });
+    setSite("");
+    setUsername("");
+    setPassword("");
   };
 
   const handleSave = async () => {
-    try {
-      const parsed = JSON.parse(vaultInput);
-      await saveVault(parsed);
-      alert("Vault encrypted and stored in memory!");
-    } catch (err) {
-      alert("Encryption error: " + err);
-    }
+    await saveToServer();
+    alert("Vault saved!");
   };
 
   return (
-    <main className="p-6 max-w-3xl mx-auto space-y-4">
-      <h1 className="text-2xl font-bold">🔐 Vault Manager (Test)</h1>
+    <div className="max-w-xl mx-auto p-6">
+      <h1 className="text-2xl font-bold mb-4">🔐 Secure Vault</h1>
 
-      <div className="space-y-2">
-        <label className="font-semibold">Mnemonic:</label>
-        <textarea
-          className="w-full border p-2 rounded"
-          rows={2}
-          value={inputMnemonic}
-          onChange={(e) => setInputMnemonic(e.target.value)}
-        />
-        <button
-          className="mt-1 px-4 py-2 bg-blue-600 text-white rounded"
-          onClick={() => {
-            setMnemonic(inputMnemonic);
-          }}
-        >
-          Set Mnemonic
-        </button>
-      </div>
-
-      <div className="space-y-2">
-        <label className="font-semibold">Vault JSON:</label>
-        <textarea
-          className="w-full border p-2 rounded"
-          rows={4}
-          value={vaultInput}
-          onChange={(e) => setVaultInput(e.target.value)}
-        />
-        <div className="flex gap-4">
-          <button
-            className="px-4 py-2 bg-green-600 text-white rounded"
-            onClick={handleSave}
-          >
-            Encrypt & Save
-          </button>
-          <button
-            className="px-4 py-2 bg-purple-600 text-white rounded"
-            onClick={handleLoad}
-          >
-            Decrypt & Load
-          </button>
-        </div>
-      </div>
-
-      {encryptedVault && (
-        <div>
-          <label className="font-semibold">🔒 Encrypted Vault (Base64):</label>
-          <textarea
+      {/* 🔑 Mnemonic UI */}
+      {showMnemonicUI ? (
+        <div className="space-y-3">
+          <p>Enter your recovery mnemonic to unlock your vault:</p>
+          <input
+            type="text"
+            placeholder="Your 12-word mnemonic"
             className="w-full border p-2 rounded"
-            rows={3}
-            readOnly
-            value={encryptedVault}
+            value={mnemonic}
+            onChange={(e) => setMnemonic(e.target.value)}
           />
+          <button
+            onClick={handleMnemonicSubmit}
+            className="bg-blue-600 text-white px-4 py-2 rounded"
+          >
+            🔓 Unlock Vault
+          </button>
         </div>
-      )}
+      ) : (
+        <>
+          {/* 🧾 Add Entry Form */}
+          <div className="space-y-2 mb-6">
+            <h2 className="text-lg font-semibold">Add New Entry</h2>
+            <input
+              type="text"
+              placeholder="Site"
+              className="w-full border p-2 rounded"
+              value={site}
+              onChange={(e) => setSite(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Username"
+              className="w-full border p-2 rounded"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              className="w-full border p-2 rounded"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button
+              onClick={handleAdd}
+              className="bg-green-600 text-white px-4 py-2 rounded"
+            >
+              ➕ Add Entry
+            </button>
+          </div>
 
-      {decryptedVault && (
-        <div>
-          <label className="font-semibold">🔓 Decrypted Vault:</label>
-          <pre className="bg-gray-100 p-3 rounded text-sm overflow-x-auto">
-            {JSON.stringify(decryptedVault, null, 2)}
-          </pre>
-        </div>
+          {/* 💾 Save Button */}
+          <button
+            onClick={handleSave}
+            className="mb-4 bg-blue-700 text-white px-4 py-2 rounded"
+          >
+            💾 Save Vault
+          </button>
+
+          {/* 📦 Vault List */}
+          <div>
+            <h2 className="text-lg font-semibold mb-2">Your Entries</h2>
+            {decryptedVault?.length === 0 && (
+              <p className="text-gray-500 text-sm">No entries yet.</p>
+            )}
+            <ul className="space-y-2">
+              {decryptedVault?.map((entry) => (
+                <li
+                  key={entry.id}
+                  className="border p-2 rounded bg-gray-50"
+                >
+                  <strong>{entry.site}</strong> – {entry.username}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </>
       )}
-    </main>
+    </div>
   );
 }
