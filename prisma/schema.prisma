@@ -14,31 +14,323 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// User model with extended SaaS features
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  password  String?  // Only required for credentials login
-  wallet    String?  @unique // Optional: derived from mnemonic
-  vaults    Vault[]
-  questions SecurityQuestion[]
-  createdAt DateTime @default(now())
+  id                    String                @id @default(uuid())
+  email                 String                @unique
+  name                  String?
+  password              String?               // Only required for credentials login
+  wallet                String?               @unique // Optional: derived from mnemonic
+  emailVerified         DateTime?
+  image                 String?
+  subscriptionPlan      SubscriptionPlan      @default(FREE)
+  subscriptionStatus    SubscriptionStatus    @default(ACTIVE)
+  role                  UserRole              @default(OWNER)
+  twoFactorEnabled      Boolean               @default(false)
+  twoFactorSecret       String?               // TOTP secret
+  backupCodes           String[]              // Emergency backup codes
+  lastLoginAt           DateTime?
+  lastActiveAt          DateTime              @default(now())
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  // Relations
+  vaults                Vault[]
+  questions             SecurityQuestion[]
+  passwordResetTokens   PasswordResetToken[]
+  subscription          Subscription?
+  ownedTeams            Team[]                @relation("TeamOwner")
+  teamMemberships       TeamMember[]
+  sentInvitations       TeamInvitation[]      @relation("InvitationSender")
+  receivedInvitations   TeamInvitation[]      @relation("InvitationReceiver")
+  sharedVaultAccess     SharedVaultAccess[]
+  auditLogs             AuditLog[]
+  accounts              Account[]
+  sessions              Session[]
+  
+  @@map("users")
 }
 
-model Vault {
+// NextAuth.js Account model
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+// NextAuth.js Session model
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// Subscription management
+model Subscription {
+  id                    String             @id @default(uuid())
+  userId                String             @unique
+  plan                  SubscriptionPlan
+  status                SubscriptionStatus
+  stripeCustomerId      String?
+  stripeSubscriptionId  String?            @unique
+  stripePriceId         String?
+  currentPeriodStart    DateTime?
+  currentPeriodEnd      DateTime?
+  cancelAtPeriodEnd     Boolean            @default(false)
+  canceledAt            DateTime?
+  billingCycle          BillingCycle       @default(MONTHLY)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("subscriptions")
+}
+
+// Team management
+model Team {
+  id              String           @id @default(uuid())
+  name            String
+  description     String?
+  ownerId         String
+  subscriptionPlan SubscriptionPlan @default(FREE)
+  maxMembers      Int              @default(1)
+  settings        Json?            // Team-wide settings
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  owner           User             @relation("TeamOwner", fields: [ownerId], references: [id])
+  members         TeamMember[]
+  invitations     TeamInvitation[]
+  sharedVaults    SharedVault[]
+  
+  @@map("teams")
+}
+
+// Team membership
+model TeamMember {
   id        String   @id @default(uuid())
-  user      User     @relation(fields: [userId], references: [id])
+  teamId    String
   userId    String
-  data      String   // Encrypted vault JSON (Base64)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  role      UserRole @default(MEMBER)
+  invitedBy String
+  joinedAt  DateTime @default(now())
+  
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([teamId, userId])
+  @@map("team_members")
 }
 
+// Team invitations
+model TeamInvitation {
+  id         String     @id @default(uuid())
+  teamId     String
+  email      String
+  role       UserRole   @default(MEMBER)
+  invitedBy  String
+  invitedUserId String?
+  token      String     @unique
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  rejectedAt DateTime?
+  createdAt  DateTime   @default(now())
+  
+  team       Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  inviter    User       @relation("InvitationSender", fields: [invitedBy], references: [id])
+  invitedUser User?     @relation("InvitationReceiver", fields: [invitedUserId], references: [id])
+  
+  @@unique([teamId, email])
+  @@map("team_invitations")
+}
+
+// Vault model (existing but enhanced)
+model Vault {
+  id          String         @id @default(uuid())
+  userId      String
+  data        String         // Encrypted vault JSON (Base64)
+  lastBackup  DateTime?
+  checksum    String?        // Integrity verification
+  version     Int            @default(1)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("vaults")
+}
+
+// Shared vaults for team collaboration
+model SharedVault {
+  id          String              @id @default(uuid())
+  name        String
+  description String?
+  teamId      String
+  ownerId     String
+  data        String              // Encrypted shared vault data
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  
+  team        Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  access      SharedVaultAccess[]
+  
+  @@map("shared_vaults")
+}
+
+// Shared vault access permissions
+model SharedVaultAccess {
+  id           String            @id @default(uuid())
+  vaultId      String
+  userId       String
+  permission   VaultPermission   @default(READ)
+  grantedBy    String
+  grantedAt    DateTime          @default(now())
+  
+  vault        SharedVault       @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([vaultId, userId])
+  @@map("shared_vault_access")
+}
+
+// Password reset tokens
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([token])
+  @@index([userId, createdAt])
+  @@map("password_reset_tokens")
+}
+
+// Security questions (existing)
 model SecurityQuestion {
   id         String   @id @default(uuid())
-  user       User     @relation(fields: [userId], references: [id])
   userId     String
   question   String
   answerHash String   // bcrypt hashed answer
+  createdAt  DateTime @default(now())
+  
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("security_questions")
+}
+
+// Audit logging for security and compliance
+model AuditLog {
+  id          String       @id @default(uuid())
+  userId      String
+  action      AuditAction
+  resource    String?      // Resource affected (vault ID, team ID, etc.)
+  resourceType String?     // Type of resource (vault, team, user, etc.)
+  details     Json?        // Additional details about the action
+  ipAddress   String?
+  userAgent   String?
+  success     Boolean      @default(true)
+  errorMessage String?
+  timestamp   DateTime     @default(now())
+  
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, timestamp])
+  @@index([action, timestamp])
+  @@map("audit_logs")
+}
+
+// Enums
+enum SubscriptionPlan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  UNPAID
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum VaultPermission {
+  READ
+  write
+  admin
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_LOGOUT
+  USER_REGISTER
+  USER_UPDATE_PROFILE
+  USER_DELETE_ACCOUNT
+  USER_ENABLE_2FA
+  USER_DISABLE_2FA
+  USER_BACKUP_CODES
+  VAULT_CREATE
+  VAULT_READ
+  VAULT_UPDATE
+  VAULT_DELETE
+  VAULT_BACKUP
+  VAULT_RESTORE
+  VAULT_EXPORT
+  VAULT_SHARE
+  VAULT_UNSHARE
+  TEAM_CREATE
+  TEAM_UPDATE
+  TEAM_DELETE
+  TEAM_INVITE_MEMBER
+  TEAM_REMOVE_MEMBER
+  TEAM_UPDATE_MEMBER_ROLE
+  SUBSCRIPTION_CREATE
+  SUBSCRIPTION_UPDATE
+  SUBSCRIPTION_CANCEL
+  SUBSCRIPTION_RENEW
+  SECURITY_QUESTION_CREATE
+  SECURITY_QUESTION_UPDATE
+  SECURITY_QUESTION_DELETE
+  PASSWORD_RESET_REQUEST
+  PASSWORD_RESET_COMPLETE
+  EMAIL_VERIFICATION
+  SUSPICIOUS_ACTIVITY
 }
 
