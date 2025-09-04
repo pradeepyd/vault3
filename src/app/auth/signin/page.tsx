@@ -1,37 +1,56 @@
 'use client';
 
 import { signIn } from 'next-auth/react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'motion/react';
 
 export default function SignIn() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
+
+  useEffect(() => {
+    const message = searchParams.get('message');
+    const emailParam = searchParams.get('email');
+    
+    if (message) {
+      setSuccessMessage(message);
+    }
+    
+    if (emailParam) {
+      setEmail(decodeURIComponent(emailParam));
+    }
+  }, [searchParams]);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError('');
 
+    // Get the callback URL from query parameters or default to /vault
+    const callbackUrl = searchParams.get('callbackUrl') || '/vault';
+
     const res = await signIn('credentials', {
       email,
       password,
       rememberMe: rememberMe.toString(), // Pass remember me preference
-      callbackUrl: '/vault',
-      redirect: false,
+      callbackUrl: callbackUrl,
+      redirect: true, // Let NextAuth handle the redirect instead of manual redirect
     });
 
+    // Note: With redirect: true, this code won't execute if redirect is successful
     setLoading(false);
 
     if (res?.error) {
       setError(res.error === 'CredentialsSignin' ? 'Invalid email or password' : res.error);
-    } else {
-      window.location.href = '/vault';
     }
   }
 
@@ -83,6 +102,20 @@ export default function SignIn() {
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back</h1>
             <p className="text-gray-600">Sign in to access your secure vault</p>
           </motion.div>
+
+          {/* Success Message */}
+          {successMessage && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg"
+            >
+              <div className="flex items-center space-x-2">
+                <span className="text-green-500 text-lg">✅</span>
+                <p className="text-green-700 text-sm font-medium">{successMessage}</p>
+              </div>
+            </motion.div>
+          )}
 
           {/* Error Message */}
           {error && (

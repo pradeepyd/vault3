@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'motion/react';
-import { signIn } from 'next-auth/react';
+import { signIn, getSession } from 'next-auth/react';
 
 export default function Register() {
   const router = useRouter();
@@ -16,32 +16,42 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
+  const [result, setResult] = useState(''); // Add result state
   const [acceptTerms, setAcceptTerms] = useState(false);
+  const [registrationComplete, setRegistrationComplete] = useState(false); // Track registration completion
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setResult(''); // Clear previous results
+
+    console.log('=== REGISTRATION FLOW START ===');
 
     // Validation
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       setLoading(false);
+      console.log('=== REGISTRATION FLOW END WITH VALIDATION ERROR ===');
       return;
     }
 
     if (password.length < 8) {
       setError('Password must be at least 8 characters long');
       setLoading(false);
+      console.log('=== REGISTRATION FLOW END WITH PASSWORD ERROR ===');
       return;
     }
 
     if (!acceptTerms) {
       setError('Please accept the Terms of Service and Privacy Policy');
       setLoading(false);
+      console.log('=== REGISTRATION FLOW END WITH TERMS ERROR ===');
       return;
     }
 
+    setResult('Creating your account...');
+    console.log('Sending registration request...');
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -51,24 +61,28 @@ export default function Register() {
     let data;
     try {
       data = await res.json();
-    } catch {
+      console.log('Registration response:', res.status, data);
+    } catch (parseError) {
+      console.error('Failed to parse registration response:', parseError);
       data = { error: 'Invalid response from server.' };
     }
 
-    setLoading(false);
-
-    if (res.ok) {
-      // Auto sign in after successful registration
-      await signIn('credentials', {
-        email,
-        password,
-        callbackUrl: '/vault',
-        redirect: false,
-      });
-      window.location.href = '/vault';
-    } else {
+    if (!res.ok) {
+      console.log('Registration failed:', data.error);
       setError(data.error || 'Registration failed.');
+      setLoading(false);
+      console.log('=== REGISTRATION FLOW END WITH API ERROR ===');
+      // Prevent page refresh - keep the form visible with error message
+      return;
     }
+
+    setResult('Account created successfully! Redirecting to sign in...');
+    console.log('Registration successful, redirecting to sign in page...');
+    
+    // Redirect to sign in page with success message and email pre-filled
+    router.push(`/auth/signin?message=Registration successful! Please sign in with your new credentials.&email=${encodeURIComponent(email)}`);
+    
+    console.log('=== REGISTRATION FLOW END ===');
   }
 
   return (
@@ -131,6 +145,44 @@ export default function Register() {
                 <span className="text-red-500 text-lg">⚠️</span>
                 <p className="text-red-700 text-sm font-medium">{error}</p>
               </div>
+            </motion.div>
+          )}
+
+          {/* Result Message */}
+          {result && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className={`mb-6 p-4 ${registrationComplete ? 'bg-green-50 border border-green-200' : 'bg-blue-50 border border-blue-200'} rounded-lg`}
+            >
+              <div className="flex items-center space-x-2">
+                <span className={`${registrationComplete ? 'text-green-500' : 'text-blue-500'} text-lg`}>
+                  {registrationComplete ? '✅' : 'ℹ️'}
+                </span>
+                <p className={`${registrationComplete ? 'text-green-700' : 'text-blue-700'} text-sm font-medium`}>{result}</p>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Manual Sign In Option - Show when registration is complete but auto-signin failed */}
+          {result && result.includes('Registration successful') && !registrationComplete && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg"
+            >
+              <div className="flex items-center space-x-2 mb-3">
+                <span className="text-yellow-500 text-lg">👉</span>
+                <p className="text-yellow-700 text-sm font-medium">Sign in manually</p>
+              </div>
+              <motion.button
+                onClick={() => router.push('/auth/signin')}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="w-full bg-gradient-to-r from-yellow-500 to-orange-500 text-white px-4 py-2 rounded-lg font-medium shadow hover:shadow-md transition-all duration-300"
+              >
+                Sign In Now
+              </motion.button>
             </motion.div>
           )}
 
